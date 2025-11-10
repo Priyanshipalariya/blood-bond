@@ -141,12 +141,18 @@ router.get('/find', async (req, res) => {
       });
     }
 
-    console.log('Searching for donors with:', { bloodType, pincode });
+    // Normalize blood type: trim, remove spaces, uppercase
+    const normalized = bloodType.toString().trim().replace(/\s+/g, '').toUpperCase();
+    // Accept either exact +/- or both if sign is missing
+    const hasSign = normalized.endsWith('+') || normalized.endsWith('-');
+    const normalizedGroups = hasSign ? [normalized] : [`${normalized}+`, `${normalized}-`];
+
+    console.log('Searching for donors with:', { bloodType, normalized, normalizedGroups, pincode });
 
     // First, find ALL donors with matching blood type (no filters)
     // Try exact match first
     let allDonorsWithBloodType = await Donor.find({ 
-      bloodGroup: bloodType.trim() 
+      bloodGroup: { $in: normalizedGroups }
     });
     
     console.log(`Total donors in DB with blood type "${bloodType}": ${allDonorsWithBloodType.length}`);
@@ -156,7 +162,10 @@ router.get('/find', async (req, res) => {
       console.log('No exact match, trying case-insensitive search...');
       allDonorsWithBloodType = await Donor.find({
         $expr: {
-          $eq: [{ $toUpper: "$bloodGroup" }, bloodType.trim().toUpperCase()]
+          $in: [
+            { $toUpper: "$bloodGroup" },
+            normalizedGroups
+          ]
         }
       });
       console.log(`Case-insensitive search found: ${allDonorsWithBloodType.length} donors`);
@@ -178,7 +187,7 @@ router.get('/find', async (req, res) => {
       
       // Also check if the query will match
       const testQuery = {
-        bloodGroup: bloodType.trim(),
+        bloodGroup: { $in: normalizedGroups },
         status: { $in: ['registered', 'active'] }
       };
       const testResult = await Donor.find(testQuery);
@@ -189,7 +198,7 @@ router.get('/find', async (req, res) => {
 
     // Build query progressively - start with just blood type
     let query = {
-      bloodGroup: bloodType.trim()
+      bloodGroup: { $in: normalizedGroups }
     };
 
     // If pincode is provided, prioritize exact match
@@ -212,7 +221,7 @@ router.get('/find', async (req, res) => {
       
       // Start with the simplest query - just blood type and status
       let searchQuery = {
-        bloodGroup: bloodType.trim(),
+        bloodGroup: { $in: normalizedGroups },
         status: { $in: ['registered', 'active'] }
       };
       
@@ -223,7 +232,7 @@ router.get('/find', async (req, res) => {
       if (donors.length === 0) {
         console.log('Trying with just blood type (no status filter)...');
         searchQuery = {
-          bloodGroup: bloodType.trim()
+          bloodGroup: { $in: normalizedGroups }
         };
         donors = await Donor.find(searchQuery).populate('userId', 'fullName email phone').limit(50);
         console.log(`Found ${donors.length} donors with blood type only`);
@@ -233,7 +242,7 @@ router.get('/find', async (req, res) => {
       if (donors.length === 0) {
         console.log('Trying with consent filter...');
         searchQuery = {
-          bloodGroup: bloodType.trim(),
+          bloodGroup: { $in: normalizedGroups },
           consentBloodRequests: true,
           status: { $in: ['registered', 'active'] }
         };
